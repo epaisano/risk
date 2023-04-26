@@ -5,6 +5,9 @@ from collections import namedtuple
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 from matplotlib.path import Path
+from collections import deque
+from queue import PriorityQueue
+import heapq
 
 import risk.definitions
 
@@ -111,8 +114,23 @@ class Board(object):
         Returns:
             bool: True if the input path is valid
         '''
+        if len(set(path)) != len(path):
+            return False
 
-    
+        def go(xs):
+            if len(xs) <= 1:
+                return True
+
+            neighbors = list(self.neighbors(xs[0]))
+            #print("neighbors ONE=", neighbors)
+            neighbors = [neighbor.territory_id for neighbor in neighbors]
+            #print("neighbors TWO=", neighbors)
+            if xs[1] in neighbors:
+                return self.is_valid_path(xs[1:])
+            else:
+                return False
+        return go(path)
+
     def is_valid_attack_path(self, path):
         '''
         The rules of Risk state that when attacking, 
@@ -130,7 +148,20 @@ class Board(object):
         Returns:
             bool: True if the path is an attack path
         '''
+        if len(path) < 2:
+            return False
 
+        firstowner = self.owner(path[0])
+
+        if self.is_valid_path(path):
+            def go(xs):
+                if len(xs) == 1:
+                    return True
+                if self.owner(xs[1]) != firstowner:
+                    return go(xs[1:])
+                else:
+                    return False
+            return go(path)
 
     def cost_of_attack_path(self, path):
         '''
@@ -143,6 +174,11 @@ class Board(object):
         Returns:
             bool: the number of enemy armies in the path
         '''
+        while len(path) != 0:
+            del path[0]
+            terrs_info = list((t for t in self.data if t.territory_id in path))
+            armies = [terr_info.armies for terr_info in terrs_info]
+            return sum(armies)
 
 
     def shortest_path(self, source, target):
@@ -161,13 +197,39 @@ class Board(object):
         Returns:
             [int]: a valid path between source and target that has minimum length; this path is guaranteed to exist
         '''
+        boardterrs = list(risk.definitions.territory_names.keys())
+
+        stack = []
+        stack.append(source)
+        ladder = deque([])
+        ladder.append(stack)
+
+        if source == target:
+            return stack
+        while len(ladder) != 0:
+            popped_stack = ladder.popleft()
+            for territory in list(boardterrs):
+
+                neighbors = list(self.neighbors(popped_stack[-1]))
+                neighbors = [neighbor.territory_id for neighbor in neighbors]
+                if territory in neighbors:
+                    if territory == target:
+                        popped_stack.append(target)
+                        return popped_stack
+                    copy = popped_stack[:]
+                    copy.append(territory)
+                    ladder.append(copy)
+                    boardterrs.remove(territory)
+        return None
 
 
     def can_fortify(self, source, target):
         '''
         At the end of a turn, a player may choose to fortify a target territory by moving armies from a source territory.
         In order for this to be a valid move,
-        there must be a valid path between the source and target territories that is owned entirely by the same player.
+        there must be a
+
+        valid path between the source and target territories that is owned entirely by the same player.
 
         Args:
             source (int): the source territory_id
@@ -176,7 +238,33 @@ class Board(object):
         Returns:
             bool: True if reinforcing the target from the source territory is a valid move
         '''
+        boardterrs = list(risk.definitions.territory_names.keys())
 
+        stack = []
+        stack.append(source)
+        ladder = deque([])
+        ladder.append(stack)
+
+        if source == target:
+            return stack
+        while len(ladder) != 0:
+            popped_stack = ladder.popleft()
+            for territory in list(boardterrs):
+
+                neighbors = list(self.neighbors(popped_stack[-1]))
+                neighbors = [neighbor.territory_id for neighbor in neighbors]
+                owner = self.owner(source)
+                neighbors = [neighbor for neighbor in neighbors if self.owner(neighbor) == owner]
+
+                if territory in neighbors:
+                    if territory == target:
+                        popped_stack.append(target)
+                        return popped_stack
+                    copy = popped_stack[:]
+                    copy.append(territory)
+                    ladder.append(copy)
+                    boardterrs.remove(territory)
+        return None
 
     def cheapest_attack_path(self, source, target):
         '''
@@ -191,6 +279,42 @@ class Board(object):
         Returns:
             [int]: a list of territory_ids representing the valid attack path; if no path exists, then it returns None instead
         '''
+        dicty = {source: [source]}
+        prioq = PriorityQueue() 
+        prioq.put((0,source))
+        vis_terr = set()
+        vis_terr.add(source)
+
+        if source == target:
+            return None
+        while not prioq.empty():
+            prio,current_territory = prioq.get()
+            if current_territory == target:
+                return dicty[current_territory]
+
+            neighbors = list(self.neighbors(current_territory))
+            neighbors = [neighbor.territory_id for neighbor in neighbors]
+
+            for neighbor in neighbors:
+                if neighbor not in vis_terr and self.owner(source) != self.owner(neighbor):
+                    copy = dicty[current_territory].copy()
+                    copy.append(neighbor)
+                    armies = self.data[neighbor].armies
+                    path_prio = prio + armies
+                    if neighbor not in [item[1] for item in prioq.queue]:
+                        dicty[neighbor]=copy
+                        prioq.put((path_prio, neighbor))
+                    else:
+                        if path_prio < min([item[0] for item in prioq.queue if item[1] == neighbor]):
+                            dicty[neighbor] = copy
+                            for i, (p,t) in prioq.queue:
+                                if t == neighbor:
+                                    q.queue[i] = (path_prio, neighbor)
+                                    heapq.heapify(prioq.queue)
+                                    break
+            vis_terr.add(current_territory)
+        return None
+ 
 
 
     def can_attack(self, source, target):
@@ -202,7 +326,10 @@ class Board(object):
         Returns:
             bool: True if a valid attack path exists between source and target; else False
         '''
-
+        if self.cheapest_attack_path(source,target):
+            return True
+        else:
+            return False 
 
     # ======================= #
     # == Continent Methods == #
